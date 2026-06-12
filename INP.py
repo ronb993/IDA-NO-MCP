@@ -441,7 +441,7 @@ class _FuncExportJob(object):
     # ------------------------------------------------------------------
 
     def _build_status_msg(self, stage_hint=None):
-        """构建包含详细进度信息的等待框文本。"""
+        """构建包含详细进度信息的等待框文本（固定 5 行宽度，避免弹窗随内容 resize）。"""
         total = len(self.remaining_funcs)
         elapsed = time.time() - self._job_start_time
         elapsed_str = "{:02d}:{:02d}".format(int(elapsed) // 60, int(elapsed) % 60)
@@ -454,47 +454,57 @@ class _FuncExportJob(object):
         else:
             eta_str = "--:--"
 
-        lines = []
-        # 第一行：阶段 + 总进度
-        lines.append("[Stage 6/6] Decompile: {}/{} ({:.0f}%)".format(
-            self.idx, total, (self.idx / total * 100) if total else 0))
+        pct = (self.idx / total * 100) if total else 0
+        lines = [
+            "[Stage 6/6] Decompile: {:6d}/{:6d} ({:3.0f}%)".format(self.idx, total, pct),
+            "OK={:5d} | Fallback={:5d} | Failed={:5d} | Skip={:5d}".format(
+                self.exported_funcs, len(self.fallback_funcs),
+                len(self.failed_funcs), len(self.skipped_funcs)),
+        ]
 
-        # 第二行：统计
-        lines.append("OK={} | Fallback={} | Failed={} | Skip={}".format(
-            self.exported_funcs, len(self.fallback_funcs),
-            len(self.failed_funcs), len(self.skipped_funcs)))
-
-        # 第三行：当前函数
+        # 第三行：当前函数（无当前时也占位，保持行数不变）
         if self._current_func_name:
             func_time = time.time() - self._current_func_start_time
             func_label = self._current_func_name
             if len(func_label) > 40:
                 func_label = func_label[:37] + "..."
             status_icon = stage_hint or "decompiling"
-            lines.append(">> {} @ {} ({:.1f}s)".format(
-                status_icon, func_label, func_time))
+            current_body = "{} @ {} ({:.1f}s)".format(status_icon, func_label, func_time)
+        else:
+            current_body = "-"
+        lines.append(">> " + self._fit_wait_box_field(current_body, 56))
 
-        # 第四行：上一个函数结果
+        # 第四行：上一个函数结果（无结果时也占位）
         if self._last_func_name:
             last_label = self._last_func_name
-            if len(last_label) > 35:
-                last_label = last_label[:32] + "..."
+            if len(last_label) > 32:
+                last_label = last_label[:29] + "..."
             if self._last_func_status == "ok":
-                lines.append("<< OK: {} ({:.1f}s)".format(last_label, self._last_func_time))
+                last_body = "OK: {} ({:.1f}s)".format(last_label, self._last_func_time)
             elif self._last_func_status == "fallback":
-                lines.append("<< FALLBACK: {} ({:.1f}s)".format(last_label, self._last_func_time))
+                last_body = "FALLBACK: {} ({:.1f}s)".format(last_label, self._last_func_time)
             elif self._last_func_status == "failed":
                 err = self._last_error_msg or "unknown"
                 if len(err) > 40:
                     err = err[:37] + "..."
-                lines.append("<< FAILED: {} - {}".format(last_label, err))
+                last_body = "FAILED: {} - {}".format(last_label, err)
             elif self._last_func_status == "skipped":
-                lines.append("<< SKIP: {}".format(last_label))
+                last_body = "SKIP: {}".format(last_label)
+            else:
+                last_body = "-"
+        else:
+            last_body = "-"
+        lines.append("<< " + self._fit_wait_box_field(last_body, 56))
 
-        # 第五行：时间
         lines.append("Elapsed: {} | ETA: {} | Cancel to abort".format(elapsed_str, eta_str))
-
         return "\n".join(lines)
+
+    @staticmethod
+    def _fit_wait_box_field(text, width):
+        """截断或右侧空格补齐到固定宽度，避免 wait box 随文本长度 resize。"""
+        if len(text) > width:
+            return text[:width - 3] + "..."
+        return text.ljust(width)
 
     def _update_wait_box(self, msg=None):
         """更新等待框显示。
