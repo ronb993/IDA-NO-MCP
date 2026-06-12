@@ -1688,8 +1688,8 @@ class _ExportPipeline(object):
         """由 IDA 定时器调用。处理当前阶段的一个工作单元。"""
         self._tick_start = time.time()
 
-        # 检查用户取消
-        if self._wait_box_active and ida_kernwin.user_cancelled():
+        # 检查用户取消（Decompile 阶段由 job 处理 cancel，避免 pipeline 抢先 _finish）
+        if not self._job_owns_wait_box() and self._wait_box_active and ida_kernwin.user_cancelled():
             self._finish(cancelled=True)
             return -1
 
@@ -1698,7 +1698,8 @@ class _ExportPipeline(object):
             self._finish(cancelled=False)
             return -1
 
-        self._update_wait_box()
+        if not self._job_owns_wait_box():
+            self._update_wait_box()
 
         # 动态构建 handlers 列表
         handlers = []
@@ -1779,6 +1780,14 @@ class _ExportPipeline(object):
     # ------------------------------------------------------------------
     # 等待框管理
     # ------------------------------------------------------------------
+
+    def _job_owns_wait_box(self):
+        """Decompile 阶段 job 已创建后，由 job 单独更新 wait box。"""
+        if self._phase >= len(self._phase_names):
+            return False
+        if self._phase_names[self._phase] != "Decompile":
+            return False
+        return self._phase_initialized and self._job is not None
 
     def _update_wait_box(self, extra=""):
         if self._phase >= self._total_phases:
@@ -2120,9 +2129,11 @@ class _ExportPipeline(object):
                 force_reexport=self.force_reexport,
             )
             self._job._start_time = self._start_time
+            # 继承 pipeline 已显示的 wait box，避免 job 再次 show_wait_box 重建对话框
+            self._job._wait_box_active = self._wait_box_active
+            self._wait_box_active = False
             _active_export_job = self._job
             self._phase_initialized = True
-            self._wait_box_active = False  # job 会管理自己的等待框
             return False  # 阶段未完成，pipeline timer 继续调用
 
         # 后续调用：委托给 job.tick()
